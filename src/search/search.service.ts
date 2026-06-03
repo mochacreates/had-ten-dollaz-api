@@ -1,49 +1,42 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { Firecrawl } from 'firecrawl';
+import Firecrawl from 'firecrawl';
+import { FirecrawlExtractResult } from './interfaces/firecrawl-extract.result.interface';
 import { Bot } from 'grammy';
-import { PROMPT, SCHEMA, FILTERS } from './constants';
-
-interface Filter {
-  id: number;
-  brand: string;
-}
-
-interface Product {
-  title: string;
-  price: number;
-  image_url: string;
-  product_url: string;
-  brand: string;
-  seller: string;
-  notified: boolean;
-}
-
-interface FirecrawlExtractResult {
-  products: Omit<Product, 'notified'>[];
-}
+import { FilterService } from '../filter/filter.service';
+import { ProductService } from '../product/product.service';
+import { Filter } from '../filter/entities/filter.entity';
+import { Product } from '../product/entities/product.entity';
+import { SCHEMA, PROMPT } from './constants';
 
 @Injectable()
-export class PocService {
-  private readonly useMock = true;
+export class SearchService {
+  private readonly useExtractMock = true;
+  private readonly useNotifyMock = true;
 
-  private readonly filters: Filter[] = FILTERS;
-  private readonly products: Product[] = [];
   private readonly firecrawl: Firecrawl;
-  private readonly firecrawlApiKey: string;
   private readonly telegramBot: Bot;
+
+  private readonly firecrawlApiKey: string;
   private readonly telegramBotToken: string;
   private readonly telegramChatId: string;
 
-  constructor(configService: ConfigService) {
-    this.firecrawlApiKey =
-      configService.getOrThrow<string>('FIRECRAWL_API_KEY');
-    this.telegramBotToken =
-      configService.getOrThrow<string>('TELEGRAM_BOT_TOKEN');
-    this.telegramChatId = configService.getOrThrow<string>('TELEGRAM_CHAT_ID');
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly filterService: FilterService,
+    private readonly productService: ProductService,
+  ) {
+    this.firecrawlApiKey = this.configService.getOrThrow('FIRECRAWL_API_KEY');
 
-    this.firecrawl = new Firecrawl({ apiKey: this.firecrawlApiKey });
+    this.telegramBotToken = this.configService.getOrThrow('TELEGRAM_BOT_TOKEN');
+
+    this.telegramChatId = this.configService.getOrThrow('TELEGRAM_CHAT_ID');
+
+    this.firecrawl = new Firecrawl({
+      apiKey: this.firecrawlApiKey,
+    });
+
     this.telegramBot = new Bot(this.telegramBotToken);
   }
 
@@ -51,19 +44,29 @@ export class PocService {
   async execute(): Promise<void> {
     await this.randomDelay(1_000, 2_000);
 
-    const randomizedFilters = this.shuffleFilters(this.filters);
+    const filters = await this.filterService.findAll();
+
+    const randomizedFilters = this.shuffleFilters(filters);
 
     for (const randomizedFilter of randomizedFilters) {
       try {
-        const url = this.buildUrl(randomizedFilter.brand);
+        const url = this.buildUrl(randomizedFilter);
 
-        const doc = this.useMock
+        const doc = this.useExtractMock
           ? this.extractMock(randomizedFilter.brand)
           : await this.extract(url);
 
         const extractedProducts = doc?.products ?? [];
 
-        this.saveProducts(extractedProducts);
+        for (const product of extractedProducts) {
+          const existing = await this.productService.findByUrl(
+            product.product_url,
+          );
+
+          if (!existing) {
+            await this.productService.create({ ...product, notified: false });
+          }
+        }
 
         await this.randomDelay(3_000, 7_000);
       } catch (error) {
@@ -74,45 +77,15 @@ export class PocService {
       }
     }
 
-    const unnotified = this.getUnnotifiedProducts();
+    const unnotified = await this.productService.getUnnotifiedProducts();
 
     await this.notify(unnotified);
 
-    this.markAsNotified(unnotified);
-  }
-
-  // Repository methods
-  private createProduct(newProduct: Omit<Product, 'notified'>): void {
-    const existingProduct = this.findProductByUrl(newProduct.product_url);
-
-    if (existingProduct) {
-      console.log(`[SKIP] ${newProduct.brand} | ${newProduct.title}`);
-
-      return;
+    for (const product of unnotified) {
+      await this.productService.markAsNotified(product.id);
     }
-
-    this.products.push({ ...newProduct, notified: false });
   }
 
-  private saveProducts(products: Omit<Product, 'notified'>[]): void {
-    products.forEach((product) => this.createProduct(product));
-  }
-
-  private findProductByUrl(url: string): Product | null {
-    return this.products.find((p) => p.product_url === url) ?? null;
-  }
-
-  private getUnnotifiedProducts(): Product[] {
-    return this.products.filter((p) => !p.notified);
-  }
-
-  private markAsNotified(products: Product[]): void {
-    products.forEach((p) => {
-      p.notified = true;
-    });
-  }
-
-  // Extraction methods
   private async extract(url: string): Promise<FirecrawlExtractResult | null> {
     const doc = await this.firecrawl.scrape(url, {
       onlyMainContent: true,
@@ -132,7 +105,7 @@ export class PocService {
           title: `${brand} Item A`,
           price: Math.floor(Math.random() * 200) + 50,
           image_url: `https://picsum.photos/seed/${slug}-a/400/400`,
-          product_url: `https://www.enjoei.com.br/p/${slug}-mock-a`,
+          product_url: `https://www.example.com/p/${slug}-mock-a`,
           brand,
           seller: `seller_${slug}_1`,
         },
@@ -140,7 +113,7 @@ export class PocService {
           title: `${brand} Item B`,
           price: Math.floor(Math.random() * 200) + 50,
           image_url: `https://picsum.photos/seed/${slug}-b/400/400`,
-          product_url: `https://www.enjoei.com.br/p/${slug}-mock-b`,
+          product_url: `https://www.example.com/p/${slug}-mock-b`,
           brand,
           seller: `seller_${slug}_2`,
         },
@@ -197,10 +170,20 @@ export class PocService {
 
     const message = this.buildMessage(products);
 
+    if (this.useNotifyMock) {
+      this.notifyMock(message);
+      return;
+    }
+
     await this.telegramBot.api.sendMessage(this.telegramChatId, message, {
       parse_mode: 'MarkdownV2',
       link_preview_options: { is_disabled: true },
     });
+  }
+
+  private notifyMock(message: string): void {
+    console.log('[NOTIFY MOCK] Mensagem que seria enviada ao Telegram:');
+    console.log(message);
   }
 
   // Helpers
@@ -215,13 +198,13 @@ export class PocService {
       .replace(/-+/g, '-');
   }
 
-  private buildUrl(brand: string): string {
-    const brandSlug = this.toBrandSlug(brand);
+  private buildUrl(filter: Filter): string {
+    const brandSlug = this.toBrandSlug(filter.brand);
 
     const url = new URL(`https://www.enjoei.com.br/${brandSlug}/s`);
 
     url.searchParams.set('ref', 'products_search');
-    url.searchParams.set('q', brand);
+    url.searchParams.set('q', filter.brand);
     url.searchParams.set('lp', '24h');
     url.searchParams.set('sr', 'same_country');
     url.searchParams.set('dep', 'masculino');
@@ -229,7 +212,6 @@ export class PocService {
     return url.toString();
   }
 
-  // Cron method
   @Cron(CronExpression.EVERY_HOUR)
   private async handleCron(): Promise<void> {
     await this.execute();

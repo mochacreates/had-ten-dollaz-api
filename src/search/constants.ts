@@ -40,14 +40,3 @@ export const SCHEMA = {
     },
   },
 };
-
-export const FILTERS = [
-  {
-    id: 1,
-    brand: 'Converse',
-  },
-  {
-    id: 2,
-    brand: 'Nike',
-  },
-];
