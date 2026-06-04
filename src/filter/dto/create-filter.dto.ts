@@ -15,6 +15,11 @@ export class CreateFilterDto {
 
   @IsNumber({ maxDecimalPlaces: 2 })
   @IsPositive()
-  @Min(10)
+  @Min(0)
+  minPrice: number;
+
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @IsPositive()
+  @Min(0)
   maxPrice: number;
 }

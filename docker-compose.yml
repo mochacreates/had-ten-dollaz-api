@@ -1,20 +1,23 @@
 services:
   postgres:
     image: postgres:latest
+    container_name: had-ten-dollaz-postgres
     environment:
       POSTGRES_USER: ${DB_USERNAME}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
       PGDATA: /data/postgres
     volumes:
       - postgres:/data/postgres
     ports:
       - "5432:5432"
     networks:
-      - postgres
+      - app-network
     restart: unless-stopped
 
   pgadmin:
     image: dpage/pgadmin4
+    container_name: had-ten-dollaz-pgadmin
     environment:
       PGADMIN_DEFAULT_EMAIL: ${DB_ADMIN_EMAIL}
       PGADMIN_DEFAULT_PASSWORD: ${DB_PASSWORD}
@@ -23,10 +26,32 @@ services:
     depends_on:
       - postgres
     networks:
+      - app-network
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: had-ten-dollaz-api
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
       - postgres
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+    networks:
+      - app-network
+    volumes:
+      - .:/usr/src/app
+      - /usr/src/app/node_modules
 
 networks:
-  postgres:
+  app-network:
     driver: bridge
 
 volumes:

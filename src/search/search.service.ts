@@ -205,6 +205,8 @@ export class SearchService {
 
     url.searchParams.set('ref', 'products_search');
     url.searchParams.set('q', filter.brand);
+    url.searchParams.set('pl', filter.minPrice.toString());
+    url.searchParams.set('pr', filter.maxPrice.toString());
     url.searchParams.set('lp', '24h');
     url.searchParams.set('sr', 'same_country');
     url.searchParams.set('dep', 'masculino');

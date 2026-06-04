@@ -8,5 +8,6 @@ import { Filter } from './entities/filter.entity';
   imports: [TypeOrmModule.forFeature([Filter])],
   controllers: [FilterController],
   providers: [FilterService],
+  exports: [FilterService],
 })
 export class FilterModule {}

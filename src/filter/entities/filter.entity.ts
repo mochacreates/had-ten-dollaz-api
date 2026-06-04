@@ -21,6 +21,15 @@ export class Filter {
   brand: string;
 
   @Column({
+    name: 'min_price',
+    type: 'decimal',
+    precision: 10,
+    scale: 2,
+    nullable: false,
+  })
+  minPrice: number;
+
+  @Column({
     name: 'max_price',
     type: 'decimal',
     precision: 10,
